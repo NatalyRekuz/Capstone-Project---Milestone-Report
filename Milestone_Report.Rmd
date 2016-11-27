@@ -1,0 +1,264 @@
+---
+title: "Data Science Specialization Capstone Project - Milestone Report"
+author: "Nataly Rekuz"
+date: "November 26, 2016"
+output:
+  html_document:
+    keep_md: yes
+    css: styles.css
+    toc: yes
+    toc_depth: 3
+  pdf_document: default
+---
+
+```{r global_options, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message=FALSE, warning=FALSE, fig.align = "center")
+```
+
+## Synopsis
+
+This Milestone Report is the part of Data Science Capstone Project (Coursera / Johns Hopkins University). 
+
+The goal of Data Science Capstone Project is to develop the application that could predict the next word a user will type, based on the probable sequence of words. This is similar to what we can use with most smartphone keyboards: the functionality could be used to suggest the next word to the users and give opportunity to select word instead of typing it by hand.
+
+
+The goals of the Milestone Report are to demonstrate the working with the data and to determine the direction of creating predictive algorithm.
+
+
+*According to assignment Milestone Report should be "written in a brief, concise style, in a way that a non-data scientist manager could appreciate", so this report is not overweighted with chunks of code. The data scientists and other interested people could find all files with whole code [here](https://github.com/NatalyRekuz/Data-Science-Specialization-Capstone-Project-Milestone-Report).* 
+
+
+
+## Data Processing and Exploratory Data Analysis
+
+The datasets we're working with come from [HC corpora](http://www.corpora.heliohost.org/), which is a collection of corpora for various languages. The corpora are collected from publicly available sources.
+
+The data could be downloaded from the Coursera site [Capstone Dataset](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) . Datasets were made available in French, German, Russian and English. For this report we use the English datasets.
+
+
+We're starting with a really large, unstructured database of the English language.
+The datasets are analyzed to obtain the general statistics.
+```{r setwd, results='hide', echo=FALSE}
+setwd("D:/Coursera/Capstone Project")
+```
+
+
+### Basic summaries
+
+The R packages we use for this project:
+
+```{r load_packages, results='hide'}
+library(stringi)
+library(devtools)
+library(hunspell)
+library(tm)
+library(SnowballC)
+library(openNLP)
+library(RWeka)
+library(doParallel)
+library(dplyr)
+library(ggplot2)
+```
+After downloading data and loading data into R environment we extract the info we are interested in.
+
+```{r download_data, echo=FALSE}
+load("base_info/blogs_raw.RData")
+load("base_info/news_raw.RData")
+load("base_info/twitter_raw.RData")
+
+load("base_info/words_blogs_raw.RData")
+load("base_info/words_news_raw.RData")
+load("base_info/words_twitter_raw.RData")
+```
+
+Basic summaries of original files are presented in the table below:
+
+```{r rawdata_features, echo=FALSE}
+files_name <- c("Blogs", "News", "Twitter")
+files_size <- c(round(file.info("./final/en_US/en_US.blogs.txt")$size/1024^2, 0),
+                round(file.info("./final/en_US/en_US.news.txt")$size/1024^2, 0),
+                round(file.info("./final/en_US/en_US.twitter.txt")$size/1024^2, 0))
+files_lines <- c(length(blogs_raw), length(news_raw), length(twitter_raw))
+files_words <- c(sum(words_blogs_raw), sum(words_news_raw), sum(words_twitter_raw))
+
+base_info <- data.frame(files_name, files_size, files_lines, files_words)
+colnames(base_info) <- c("Name", "Size (mb)", "Lines", "Words")
+```
+```{r raw_table, echo=FALSE}
+kable(base_info, format = "markdown", caption = "Original datasets info")
+```
+
+The density plot below demonstrates the word distribution for three files. For easy perception the log10 scale is used for x-axis of the plot.
+
+```{r density_plot, echo=FALSE, fig.height=3}
+load("base_info/words_density.RData")
+ggplot(wntbr_g, aes(x=value)) + geom_density(aes(group=source, colour=source)) + 
+    scale_x_log10(breaks = 10^(0:4), labels = 10^(0:4)) +
+    labs(x = "Word Counts", y = "Density")
+```
+
+
+### Sampling and Cleaning Data
+
+
+#### Sampling
+
+The data sets are fairly large. We need to reduce the time needed for the pre-processing and the obtaining of ngrams, so we'd like to work with the smaller subsets of the data.
+
+We used the `rbinom` function to create 3 separate sub-sample datasets by reading in the random subsets of the original data sets and writing them out to 3 separate files.
+
+Basic summaries of files after sampling are presented in the table below:
+
+```{r sampling, echo=FALSE}
+load("sampling/sample_blogs.RData")
+load("sampling/sample_news.RData")
+load("sampling/sample_twitter.RData")
+
+load("base_info/words_sample_blogs.RData")
+load("base_info/words_sample_news.RData")
+load("base_info/words_sample_twitter.RData")
+```
+
+```{r sampledata_features, echo=FALSE}
+files_name_s <- c("Blogs sample", "News sample", "Twitter sample")
+files_size_s <- c(round(file.info("./sampling/sample_blogs.RData")$size, 0),
+                round(file.info("./sampling/sample_news.RData")$size, 0),
+                round(file.info("./sampling/sample_twitter.RData")$size, 0))
+files_lines_s <- c(length(sample_blogs), length(sample_news), length(sample_twitter))
+files_words_s <- c(sum(words_sample_blogs), sum(words_sample_news), sum(words_sample_twitter))
+
+base_info_s <- data.frame(files_name_s, files_size_s, files_lines_s, files_words_s)
+colnames(base_info_s) <- c("Name", "Size (kb)", "Lines", "Words")
+```
+```{r samples_table, echo=FALSE}
+kable(base_info_s, format = "markdown", caption = "Sample datasets info")
+```
+Then we join three obtained data sets into overall data set.
+
+
+
+#### Cleaning Data
+
+
+The following steps are used to prepare the joint data set for the analysis:
+
+```{r clean_corpus, echo=FALSE}
+transf <- matrix(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 
+                 'Convert to ASCII',
+                 'Convert text to lowercase',
+                 'Transform short form of auxiliary verbs ("\'ll" to "will", "don\'t" to "do not" etc.)',
+                 "Remove hashtags & usernames",
+                 "Remove retweet objects",
+                 "Remove http & ftp addressess",
+                 "Remove e-mail addresses",
+                 "Remove sequence numbers (e.g., 25th)",
+                 "Remove profanity",
+                 "Remove punctuation", 
+                 "Remove digits",
+                 "Remove extra white spaces"),
+               ncol = 2, byrow = FALSE)
+
+colnames(transf) <- c("Order", "Transformation")
+```
+```{r trans, echo=FALSE}
+kable(transf, format = "markdown")
+```
+The list of profanity can be downloaded from  [List of profanity (zip)](http://www.freewebheaders.com/wordpress/wp-content/uploads/full-list-of-bad-words-banned-by-google-txt-file.zip). These were also locally stored as "bad-words-banned-by-google.txt".
+
+
+Steps from 1 to 3 were applied directly to the joint data set with base functions. Then the data set has been converted into the corpus and other steps were performed with the functions of `tm` package.
+
+```{r load_sample_data, echo=FALSE}
+load("sampling/sample_data.RData")
+load("base_info/profanity.RData")
+```
+Some types of data transformation don't fit for this project's goals. 
+We don't use:
+
+- stemming (the process of reducing inflected (or sometimes derived) words to their word stem, base or root form);
+
+- removing stopwords (most common words of the English language).
+
+These types of transformation could distort info we use and lead to incorrect analysis.
+
+
+
+## Creating the Document-Term Matrices
+
+
+After cleaning data the document-term matrix can be computed. We convert the cleaned text corpus into document-term matrices based on different ngrams.
+We built frequency-term matrices for unigram, bigram, trigram, fourgram and fivegram.  
+
+```{r load_dtms, echo=FALSE}
+load("ngrams/dtm_unigram.RData")
+load("ngrams/dtm_bigram.RData")
+load("ngrams/dtm_trigram.RData")
+load("ngrams/dtm_fourgram.RData")
+load("ngrams/dtm_fivegram.RData")
+```
+```{r load_dtms_freq, echo=FALSE}
+load("ngrams/freq_unigram.RData")
+load("ngrams/freq_bigram.RData")
+load("ngrams/freq_trigram.RData")
+load("ngrams/freq_fourgram.RData")
+load("ngrams/freq_fivegram.RData")
+```
+
+
+### The Most Frequent N-Grams
+
+
+The plots below demonstrate the most common N-grams obtained from our cleaned corpus:
+
+```{r plot_1to4Grams, echo=FALSE, fig.height=4, fig.width=7}
+plot_unigram <- ggplot(freq_unigram[1:20, ], aes(x = reorder(term, frequency), 
+                               y = frequency, fill = frequency)) + 
+    geom_bar(stat="identity") +
+    labs(x = "Term", y = "Frequency", title = "Top 20 unigrams") + 
+    coord_flip()
+plot_unigram
+
+plot_bigram <- ggplot(freq_bigram[1:20, ], aes(x = reorder(term, frequency), 
+                               y = frequency, fill = frequency)) + 
+    geom_bar(stat="identity") +
+    labs(x = "Term", y = "Frequency", title = "Top 20 bigrams") + 
+    coord_flip()
+plot_bigram
+
+plot_trigram <- ggplot(freq_trigram[1:20, ], aes(x = reorder(term, frequency), 
+                               y = frequency, fill = frequency)) + 
+    geom_bar(stat="identity") +
+    labs(x = "Term", y = "Frequency", title = "Top 20 trigrams") + 
+    coord_flip()
+plot_trigram
+
+plot_fourgram <- ggplot(freq_fourgram[1:20, ], aes(x = reorder(term, frequency), 
+                               y = frequency, fill = frequency)) + 
+    geom_bar(stat="identity") +
+    labs(x = "Term", y = "Frequency", title = "Top 20 four-grams") + 
+    coord_flip()
+plot_fourgram
+
+plot_fifegram <- ggplot(freq_fivegram[1:20,], aes(x = reorder(term, frequency), 
+                               y = frequency, fill = frequency)) + 
+    geom_bar(stat="identity") +
+    labs(x = "Term", y = "Frequency", title="Top 20 five-grams") + 
+    coord_flip()
+plot_fifegram 
+```
+
+
+## Future Work
+
+It is known that currently available predictive text models can run on mobile phones, which typically have limited memory and processing power. We have to take into account the size and speed of prediction model, so we'll investigate applying some additional transformations of data (e.g., determine synonyms, clustering) in order to reduce the size of document-term matrices. 
+
+The prediction model will be based on the n-gram approach. We'll use Markov chains concept in building the model to predict the most likely next word with using the probability matrices. 
+
+We'll estimate the benefits of using different smoothing techniques (Katz's back-off model, Kneser–Ney smoothing etc.) and choose certain one.
+
+The Shiny application should have user-friendly interface. It'll let the user input text and suggest several possible next words.
+
+
+
+
