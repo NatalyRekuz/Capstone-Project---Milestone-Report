@@ -26,7 +26,7 @@ The goal of Data Science Capstone Project is to develop the application that cou
 The goals of the Milestone Report are to demonstrate the working with the data and to determine the direction of creating predictive algorithm.
 
 
-*According to assignment Milestone Report should be "written in a brief, concise style, in a way that a non-data scientist manager could appreciate", so this report is not overweighted with chunks of code. The data scientists and other interested people could find all files with whole code [here](https://github.com/NatalyRekuz/Data-Science-Specialization-Capstone-Project-Milestone-Report).* 
+*According to assignment Milestone Report should be "written in a brief, concise style, in a way that a non-data scientist manager could appreciate", so this report is not overweighted with chunks of code. The data scientists and other interested people could find all files with whole code [here](https://github.com/NatalyRekuz/Capstone-Project---Milestone-Report).* 
 
 
 
